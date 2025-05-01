@@ -9,10 +9,11 @@ router.get('/', async (req, res) => {
     const result = await pool.query('SELECT * FROM breaks ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (err) {
-    console.error('Error querying breaks:', err);
-    res.status(500).json({ error: err.message || 'Internal server error' }); // <- add fallback message
+    console.error('FULL ERROR:', err);  // 👈 Log full object
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
+
 
 
 
