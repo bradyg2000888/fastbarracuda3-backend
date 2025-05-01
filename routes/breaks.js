@@ -1,78 +1,56 @@
-
+// routes/breaks.js
 const express = require('express');
-const pool = require('../db.js');
 const router = express.Router();
+const pool = require('../db');
 
-// GET all breaks
+// GET /api/breaks
 router.get('/', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM breaks ORDER BY created_at DESC');
+    const result = await pool.query('SELECT * FROM breaks WHERE active = true ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (err) {
-    console.error('🔥 FULL ERROR OBJECT:', JSON.stringify(err, null, 2));
-    res.status(500).json({
-      error: err.message || 'Unknown error',
-      debug: err
-    });
+    console.error('FULL ERROR:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
 
-
-
-
-// POST a new break (admin only)
+// POST /api/breaks - Admin creates a new break and 30 teams
 router.post('/', async (req, res) => {
-  const { name, break_type, admin_code } = req.body;
-  if (admin_code !== process.env.ADMIN_CODE) {
-    return res.status(403).json({ error: 'Unauthorized' });
+  const { name, teams, discountPerExtra } = req.body;
+
+  if (!name || !Array.isArray(teams) || teams.length !== 30) {
+    return res.status(400).json({ error: 'Invalid data submitted' });
   }
 
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      'INSERT INTO breaks (name, break_type) VALUES ($1, $2) RETURNING *',
-      [name, break_type]
-    );
-    res.status(201).json(result.rows[0]);
+    await client.query('BEGIN');
+
+    const insertBreakQuery = `
+      INSERT INTO breaks (name, active, discount_per_extra_team, created_at)
+      VALUES ($1, true, $2, NOW())
+      RETURNING id
+    `;
+    const result = await client.query(insertBreakQuery, [name, discountPerExtra]);
+    const breakId = result.rows[0].id;
+
+    const insertTeamQuery = `
+      INSERT INTO teams (break_id, team_name, price, is_taken)
+      VALUES ($1, $2, $3, false)
+    `;
+
+    for (const team of teams) {
+      await client.query(insertTeamQuery, [breakId, team.team, team.price]);
+    }
+
+    await client.query('COMMIT');
+    res.json({ message: 'Break and teams created', breakId });
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET teams for a specific break
-router.get('/:id/teams', async (req, res) => {
-  const breakId = req.params.id;
-  try {
-    const result = await pool.query(
-      'SELECT * FROM break_teams WHERE break_id = $1 ORDER BY team_name',
-      [breakId]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST new teams to a break (admin only)
-router.post('/:id/teams', async (req, res) => {
-  const breakId = req.params.id;
-  const { teams, admin_code } = req.body;
-
-  if (admin_code !== process.env.ADMIN_CODE) {
-    return res.status(403).json({ error: 'Unauthorized' });
-  }
-
-  try {
-    const inserts = await Promise.all(
-      teams.map(team =>
-        pool.query(
-          'INSERT INTO break_teams (break_id, team_name, cost) VALUES ($1, $2, $3) RETURNING *',
-          [breakId, team.name, team.cost]
-        )
-      )
-    );
-    res.status(201).json(inserts.map(result => result.rows[0]));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    await client.query('ROLLBACK');
+    console.error('Error inserting break and teams:', err);
+    res.status(500).json({ error: 'Database error' });
+  } finally {
+    client.release();
   }
 });
 
