@@ -9,9 +9,11 @@ router.get('/', async (req, res) => {
     const result = await pool.query('SELECT * FROM breaks ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (err) {
+    console.error('Error querying breaks:', err); // 🔍 Add this line
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // POST a new break (admin only)
 router.post('/', async (req, res) => {
